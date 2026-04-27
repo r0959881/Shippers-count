@@ -29,8 +29,24 @@ def get_line_label(line_type: str) -> str:
   return "Robot line (14 kg)" if (line_type or "").strip().lower() == "robot" else "Non-robot line (10 kg)"
 
 
-def calc_total_weight(qty: int, piece_weight: float) -> float:
-  return float(qty) * float(piece_weight)
+def parse_kg_value(value) -> float:
+  if pd.isna(value):
+    return 0.0
+  text = str(value).strip().lower()
+  if not text:
+    return 0.0
+  text = text.replace("kgs", "").replace("kg", "").replace(",", ".")
+  match = re.search(r"[-+]?\d*\.?\d+", text)
+  if not match:
+    return 0.0
+  try:
+    return float(match.group(0))
+  except ValueError:
+    return 0.0
+
+
+def calc_total_weight(qty: int, piece_weight: float, shipper_weight: float = 0.0) -> float:
+  return (float(qty) * float(piece_weight)) + float(shipper_weight)
 
 
 def calc_weight_utilization(total_weight: float, weight_limit: float) -> float:
@@ -131,6 +147,7 @@ def load_shippers_from_excel(filepath: str) -> pd.DataFrame:
 
     candidate_name_cols = [c for c in df.columns if c not in ["A", "B", "C"]]
     name_col = candidate_name_cols[0] if candidate_name_cols else None
+    weight_col = next((c for c in df.columns if "weight" in str(c).strip().lower()), None)
 
     df["A_num"] = pd.to_numeric(df["A"], errors="coerce")
     df["B_num"] = pd.to_numeric(df["B"], errors="coerce")
@@ -141,6 +158,11 @@ def load_shippers_from_excel(filepath: str) -> pd.DataFrame:
         name_col = "Shipper"
     else:
         df[name_col] = df[name_col].astype(str).str.strip()
+
+    if weight_col is not None:
+      df["Shipper_Weight_kg"] = df[weight_col].apply(parse_kg_value)
+    else:
+      df["Shipper_Weight_kg"] = 0.0
 
     clean = df.dropna(subset=["A_num", "B_num", "C_num"]).copy()
     clean = clean[(clean["A_num"] > 0) & (clean["B_num"] > 0) & (clean["C_num"] > 0)]
@@ -158,6 +180,7 @@ def load_shippers_from_excel(filepath: str) -> pd.DataFrame:
         "A": clean["A_num"].astype(int),
         "B": clean["B_num"].astype(int),
         "C": clean["C_num"].astype(int),
+      "Shipper Weight (kg)": clean["Shipper_Weight_kg"].astype(float),
     }).reset_index(drop=True)
 
     if out.empty:
@@ -715,19 +738,20 @@ def compute_results(
 
   for _, r in shippers.iterrows():
     shipper = (int(r["A"]), int(r["B"]), int(r["C"]))
+    shipper_weight = float(r.get("Shipper Weight (kg)", 0.0))
     pA, pB, pC = product
 
     shipper_candidates = []
 
     nA, nB, nC, qty = calc_single(shipper, product)
     fill = fill_percent(qty, shipper, product)
-    total_weight = calc_total_weight(qty, piece_weight)
+    total_weight = calc_total_weight(qty, piece_weight, shipper_weight)
     weight_metrics = make_weight_metrics(total_weight, weight_limit)
     row = dict(
       shipper_name=r["Shipper"], sA=int(r["A"]), sB=int(r["B"]), sC=int(r["C"]),
       pA=pA, pB=pB, pC=pC, nA=nA, nB=nB, nC=nC, qty=qty,
       fill=round(fill, 4), mode="single", N=1,
-      piece_weight=round(piece_weight, 4), total_weight=round(total_weight, 4),
+      piece_weight=round(piece_weight, 4), shipper_weight=round(shipper_weight, 4), total_weight=round(total_weight, 4),
       weight_limit=round(weight_limit, 4), line_type=line_type,
       weight_status=get_weight_status(total_weight, weight_limit),
       **weight_metrics,
@@ -738,13 +762,13 @@ def compute_results(
     if use_wrap and "wrapA" in selected_wrap_modes:
       nA1, nB1, nC1, bundles1, qty1 = calc_wrap_option1(shipper, product, N)
       fill1 = fill_percent(qty1, shipper, product)
-      total_weight1 = calc_total_weight(qty1, piece_weight)
+      total_weight1 = calc_total_weight(qty1, piece_weight, shipper_weight)
       weight_metrics1 = make_weight_metrics(total_weight1, weight_limit)
       row1 = dict(
         shipper_name=r["Shipper"], sA=int(r["A"]), sB=int(r["B"]), sC=int(r["C"]),
         pA=pA, pB=pB, pC=pC, nA=nA1, nB=nB1, nC=nC1, qty=qty1,
         fill=round(fill1, 4), mode="wrapA", N=N,
-        piece_weight=round(piece_weight, 4), total_weight=round(total_weight1, 4),
+        piece_weight=round(piece_weight, 4), shipper_weight=round(shipper_weight, 4), total_weight=round(total_weight1, 4),
         weight_limit=round(weight_limit, 4), line_type=line_type,
         weight_status=get_weight_status(total_weight1, weight_limit),
         **weight_metrics1,
@@ -755,13 +779,13 @@ def compute_results(
     if use_wrap and "wrapB" in selected_wrap_modes:
       nA2, nB2, nC2, bundles2, qty2 = calc_wrap_option2(shipper, product, N)
       fill2 = fill_percent(qty2, shipper, product)
-      total_weight2 = calc_total_weight(qty2, piece_weight)
+      total_weight2 = calc_total_weight(qty2, piece_weight, shipper_weight)
       weight_metrics2 = make_weight_metrics(total_weight2, weight_limit)
       row2 = dict(
         shipper_name=r["Shipper"], sA=int(r["A"]), sB=int(r["B"]), sC=int(r["C"]),
         pA=pA, pB=pB, pC=pC, nA=nA2, nB=nB2, nC=nC2, qty=qty2,
         fill=round(fill2, 4), mode="wrapB", N=N,
-        piece_weight=round(piece_weight, 4), total_weight=round(total_weight2, 4),
+        piece_weight=round(piece_weight, 4), shipper_weight=round(shipper_weight, 4), total_weight=round(total_weight2, 4),
         weight_limit=round(weight_limit, 4), line_type=line_type,
         weight_status=get_weight_status(total_weight2, weight_limit),
         **weight_metrics2,
@@ -853,10 +877,11 @@ def generate_report(shipper_excel_path: str, product: tuple, N: int, out_path: s
 
   for _, r in shippers.iterrows():
     shipper = (r["A"], r["B"], r["C"])
+    shipper_weight = float(r.get("Shipper Weight (kg)", 0.0))
 
     nA, nB, nC, qty = calc_single(shipper, product)
     fill = fill_percent(qty, shipper, product)
-    total_weight = calc_total_weight(qty, piece_weight)
+    total_weight = calc_total_weight(qty, piece_weight, shipper_weight)
     weight_metrics = make_weight_metrics(total_weight, weight_limit)
     single_rows.append({
       "Shipper": r["Shipper"], "A (mm)": r["A"], "B (mm)": r["B"], "C (mm)": r["C"],
@@ -864,6 +889,7 @@ def generate_report(shipper_excel_path: str, product: tuple, N: int, out_path: s
       "Total Qty": qty,
       "Fill %": round(fill * 100, 2),
       "Piece Weight (kg)": round(piece_weight, 4),
+      "Shipper Weight (kg)": round(shipper_weight, 4),
       "Total Weight (kg)": round(total_weight, 4),
       "Weight Limit (kg)": weight_limit,
       "Weight % of Limit": weight_metrics["Weight % of Limit"],
@@ -879,7 +905,7 @@ def generate_report(shipper_excel_path: str, product: tuple, N: int, out_path: s
     if use_wrap and "wrapA" in selected_wrap_modes:
       nA1, nB1, nC1, bundles1, qty1 = calc_wrap_option1(shipper, product, N)
       fill1 = fill_percent(qty1, shipper, product)
-      total_weight1 = calc_total_weight(qty1, piece_weight)
+      total_weight1 = calc_total_weight(qty1, piece_weight, shipper_weight)
       weight_metrics1 = make_weight_metrics(total_weight1, weight_limit)
       wrap1_data = (nA1, nB1, nC1, qty1, fill1)
       opt1_rows.append({
@@ -888,6 +914,7 @@ def generate_report(shipper_excel_path: str, product: tuple, N: int, out_path: s
         "Bundles": bundles1, "Total Qty": qty1,
         "Fill %": round(fill1 * 100, 2),
         "Piece Weight (kg)": round(piece_weight, 4),
+        "Shipper Weight (kg)": round(shipper_weight, 4),
         "Total Weight (kg)": round(total_weight1, 4),
         "Weight Limit (kg)": weight_limit,
         "Weight % of Limit": weight_metrics1["Weight % of Limit"],
@@ -900,7 +927,7 @@ def generate_report(shipper_excel_path: str, product: tuple, N: int, out_path: s
     if use_wrap and "wrapB" in selected_wrap_modes:
       nA2, nB2, nC2, bundles2, qty2 = calc_wrap_option2(shipper, product, N)
       fill2 = fill_percent(qty2, shipper, product)
-      total_weight2 = calc_total_weight(qty2, piece_weight)
+      total_weight2 = calc_total_weight(qty2, piece_weight, shipper_weight)
       weight_metrics2 = make_weight_metrics(total_weight2, weight_limit)
       wrap2_data = (nA2, nB2, nC2, qty2, fill2)
       opt2_rows.append({
@@ -909,6 +936,7 @@ def generate_report(shipper_excel_path: str, product: tuple, N: int, out_path: s
         "Bundles": bundles2, "Total Qty": qty2,
         "Fill %": round(fill2 * 100, 2),
         "Piece Weight (kg)": round(piece_weight, 4),
+        "Shipper Weight (kg)": round(shipper_weight, 4),
         "Total Weight (kg)": round(total_weight2, 4),
         "Weight Limit (kg)": weight_limit,
         "Weight % of Limit": weight_metrics2["Weight % of Limit"],
@@ -929,20 +957,22 @@ def generate_report(shipper_excel_path: str, product: tuple, N: int, out_path: s
       valid_candidates = candidates
     best = max(valid_candidates, key=lambda x: (x[2], x[1]))
 
+    best_total_weight = calc_total_weight(best[1], piece_weight, shipper_weight)
     summary_rows.append({
       "Shipper": r["Shipper"], "A (mm)": r["A"], "B (mm)": r["B"], "C (mm)": r["C"],
       "Best Mode": best[0],
       "nA": best[3][0], "nB": best[3][1], "nC": best[3][2],
       "Total Qty": best[1],
       "Piece Weight (kg)": round(piece_weight, 4),
-      "Total Weight (kg)": round(calc_total_weight(best[1], piece_weight), 4),
+      "Shipper Weight (kg)": round(shipper_weight, 4),
+      "Total Weight (kg)": round(best_total_weight, 4),
       "Weight Limit (kg)": weight_limit,
       "Fill %": round(best[2] * 100, 2),
-      "Weight % of Limit": round(calc_weight_utilization(calc_total_weight(best[1], piece_weight), weight_limit) * 100, 2),
-      "Remaining to Limit (kg)": round(max(calc_weight_gap(calc_total_weight(best[1], piece_weight), weight_limit), 0.0), 4),
-      "Over Limit (kg)": round(max(-calc_weight_gap(calc_total_weight(best[1], piece_weight), weight_limit), 0.0), 4),
+      "Weight % of Limit": round(calc_weight_utilization(best_total_weight, weight_limit) * 100, 2),
+      "Remaining to Limit (kg)": round(max(calc_weight_gap(best_total_weight, weight_limit), 0.0), 4),
+      "Over Limit (kg)": round(max(-calc_weight_gap(best_total_weight, weight_limit), 0.0), 4),
       "Line Type": line_label,
-      "Status": "GOOD" if calc_total_weight(best[1], piece_weight) <= weight_limit and best[2] >= FILL_THRESHOLD else ("UNDER LIMIT" if calc_total_weight(best[1], piece_weight) <= weight_limit else "EXCEEDED WEIGHT")
+      "Status": "GOOD" if best_total_weight <= weight_limit and best[2] >= FILL_THRESHOLD else ("UNDER LIMIT" if best_total_weight <= weight_limit else "EXCEEDED WEIGHT")
     })
 
   single_df = pd.DataFrame(single_rows)
@@ -964,6 +994,7 @@ def generate_report(shipper_excel_path: str, product: tuple, N: int, out_path: s
       "mode": "Mode",
       "N": "Wrap Qty N",
       "piece_weight": "Piece Weight (kg)",
+      "shipper_weight": "Shipper Weight (kg)",
       "total_weight": "Total Weight (kg)",
       "weight_limit": "Weight Limit (kg)",
       "weight_status": "Weight Status",
