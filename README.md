@@ -5,9 +5,12 @@ Desktop application for evaluating shipper fit and generating Excel packing repo
 ## Features
 
 - Load shipper dimensions from an Excel file
+- Optional shipper weight support from Excel (included in total weight checks)
 - Calculate Single and Wrap configurations
 - Apply fill threshold logic (default 80%)
+- Apply line-type weight limits (Non-robot: 10 kg, Robot: 14 kg)
 - Export formatted Excel report sheets
+- View results in an interactive 3D viewer
 - Build as a Windows onefile executable
 
 ## Project Files
@@ -26,6 +29,31 @@ Desktop application for evaluating shipper fit and generating Excel packing repo
 - PowerShell
 - Inno Setup 6 (only if creating installer)
 
+## Shipper Excel Format
+
+Required columns:
+
+- A
+- B
+- C
+
+Optional columns:
+
+- Shipper name column (any non-A/B/C column is used as shipper name)
+- Weight column (any header containing the word Weight)
+
+Weight values can be provided in flexible formats, for example:
+
+- 0.22
+- 0,22
+- 0.22 KG
+
+If no weight column is present, shipper weight is treated as 0.0 kg.
+
+Total weight used by the app is:
+
+- total_weight = (total_pieces * piece_weight) + shipper_weight
+
 ## Setup (Development)
 
 1. Open PowerShell in this project folder.
@@ -39,6 +67,12 @@ py -3 -m pip install -r requirements.txt
 
 ```powershell
 py -3 packing_tool.py
+```
+
+Fallback command:
+
+```powershell
+python packing_tool.py
 ```
 
 ## Build Onefile EXE
@@ -82,3 +116,5 @@ Option B:
 - Target machine does not need Python.
 - First launch in onefile mode can be slower because runtime files are extracted to a temp location.
 - If Windows SmartScreen appears, click More info and then Run anyway.
+- Weight pass/fail is evaluated against the selected line type limit.
+- Report sheets include Piece Weight (kg), Shipper Weight (kg), and Total Weight (kg).
